@@ -1,0 +1,721 @@
+#!/bin/sh
+
+# https://www.etalabs.net/sh_tricks.html
+println() {
+    printf '%s\n' "$*"
+}
+
+err() {
+    println "ERROR: $*" >&2
+}
+
+exists() {
+    command -v "$1" >/dev/null
+}
+
+escape_quote() {
+    # this took me a while...
+    # shellcheck disable=SC1003
+    echo "$1" | sed 's/'\''/'\''\\'\'''\''/g'
+}
+
+escape_dquote() {
+    echo "$1" | sed 's/"/\\"/g'
+}
+
+gen_hash() {
+    echo "$1" | cksum | cut -d ' ' -f1
+}
+
+varval() {
+    eval "echo \"\$$1\""
+}
+
+type_known() {
+    case "$1" in
+        bol|num|str|arr|obj|obj_light)
+            return 0 ;;
+    esac
+    return 1
+}
+
+typeof() {
+    kind=$(varval "${1}_type")
+    if type_known "$kind"; then
+        println "$kind"
+    fi
+}
+
+isref() {
+    case "$1" in
+        '[bol] '*|'[num] '*|'[str] '*|'[arr] '*|'[obj] '*|'[obj_light] '*)
+            return 0 ;;
+    esac
+    return 1
+}
+
+refof() {
+    echo "$1" | cut -d ' ' -f2
+}
+
+json_ref() {
+    val="$1"
+    if isref "$val"; then
+        ref=$(refof "$val")
+        ref_kind=$(typeof "$ref")
+        "$ref_kind" "$ref" json
+    else
+        val=$(escape_dquote "$val")
+        printf '"%s"\n' "$val"
+    fi
+}
+
+val() {
+    [ $# = 0 ] && {
+        err 'usage: val <NAME>'
+        return 1
+    }
+
+    force_t=
+    [ "$1" = '-t' ] &&
+        force_t=1 &&
+        shift
+    
+    name="$1"
+    shift
+    kind=$(typeof "$name")
+
+    if [ $# = 0 ]; then
+        if [ -t 1 ] || [ -n "$force_t" ]; then
+            if type_known "$kind"; then
+                val=$("$kind" "$name" json)
+            else
+                val=$(varval "$name")
+                [ -n "$val" ] || return 1
+                val=$(printf '"%s"\n' "$val")
+            fi
+            if exists jq; then
+                println "$val" | jq -C
+            else
+                println "$val"
+            fi
+        else
+            if type_known "$kind"; then
+                "$kind" "$name" val
+            else
+                varval "$name"
+            fi
+        fi
+    else
+        is_filter=
+        case "$1" in
+            .*|'['*)
+                is_filter=t ;;
+        esac
+        if [ -n "$is_filter" ] && exists jq; then
+            val "$name" json | jq -C "$@"
+        else
+            "$kind" "$name" "$@"
+        fi
+    fi
+}
+
+bol() {
+    [ $# -lt 2 ] && {
+        err 'usage: bol <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    bol_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$bol_name")
+    [ "$kind" != bol ] && [ "$cmd" != '=' ] && {
+        err "'$bol_name' is not a bol"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${bol_name}='[bol] $bol_name'"
+            eval "${bol_name}_val="
+            eval "${bol_name}_type=bol"
+            if [ -n "$1" ]; then
+                bol "$bol_name" set "$1"
+            fi ;;
+
+        clear)
+            eval "${bol_name}_val=" ;;
+
+        unset)
+            unset "$bol_name"
+            unset "${bol_name}_val"
+            unset "${bol_name}_type" ;;
+
+        set)
+            val="$1"
+            case "$val" in
+                1|t|true|True|TRUE) val=t ;;
+                *)                  val=  ;;
+            esac
+            eval "${bol_name}_val=$val" ;;
+
+        tog)
+            if bol "$bol_name" val; then
+                bol "$bol_name" set false
+            else
+                bol "$bol_name" set true
+            fi ;;
+
+        val)
+            val=$(varval "${bol_name}_val")
+            [ "$val" = t ] ;;
+
+        json)
+            if bol "$bol_name" val; then
+                printf 'true\n'
+            else
+                printf 'false\n'
+            fi ;;
+
+        sh)
+            name=$(varval "$bol_name")
+            val=$(varval "${bol_name}_val")
+            kind=$(typeof "$bol_name")
+            printf "%s='%s'\n" "${bol_name}" "$name"
+            printf '%s=%s\n' "${bol_name}_val" "$val"
+            printf '%s=%s\n' "${bol_name}_type" "$kind" ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+num() {
+    [ $# -lt 2 ] && {
+        err 'usage: num <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    num_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$num_name")
+    [ "$kind" != num ] && [ "$cmd" != '=' ] && {
+        err "'$num_name' is not a num"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${num_name}='[num] $num_name'"
+            eval "${num_name}_val="
+            eval "${num_name}_type=num"
+            if [ -n "$1" ]; then
+                num "$num_name" set "$1"
+            fi ;;
+
+        clear)
+            eval "${num_name}_val=" ;;
+
+        unset)
+            unset "$num_name"
+            unset "${num_name}_val"
+            unset "${num_name}_type" ;;
+
+        set)
+            val="$1"
+            eval "${num_name}_val=$val" ;;
+
+        val)
+            varval "${num_name}_val" ;;
+
+        json)
+            num "$num_name" val ;;
+
+        sh)
+            name=$(varval "${num_name}")
+            val=$(num "$num_name" val)
+            kind=$(typeof "$num_name")
+            printf "%s='%s'\n" "${num_name}" "$name"
+            printf '%s=%s\n' "${num_name}_val" "$val"
+            printf '%s=%s\n' "${num_name}_type" "$kind" ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+str() {
+    [ $# -lt 2 ] && {
+        err 'usage: str <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    str_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$str_name")
+    [ "$kind" != str ] && [ "$cmd" != '=' ] && {
+        err "'$num_name' is not a str"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${str_name}='[str] $str_name'"
+            eval "${str_name}_val="
+            eval "${str_name}_type=str"
+            if [ -n "$1" ]; then
+                str "$str_name" set "$1"
+            fi ;;
+
+        clear)
+            eval "${str_name}_val=" ;;
+
+        unset)
+            unset "$str_name"
+            unset "${str_name}_val"
+            unset "${str_name}_type" ;;
+
+        set)
+            val=$(escape_quote "$1")
+            eval "${str_name}_val='$val'" ;;
+
+        len)
+            str "$str_name" val | wc -c ;;
+
+        val)
+            eval "println \"\$${str_name}_val\"" ;;
+
+        json)
+            val=$(str "$str_name" val)
+            val=$(escape_dquote "$val")
+            printf '"%s"\n' "$val" ;;
+
+        sh)
+            name=$(varval "${str_name}")
+            val=$(str "$str_name" val)
+            val=$(escape_quote "$val")
+            kind=$(typeof "$str_name")
+            printf "%s='%s'\n" "${str_name}" "$name"
+            printf "%s='%s'\n" "${str_name}_val" "$val"
+            printf '%s=%s\n' "${str_name}_type" "$kind" ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+# a quick and unsafe way to push
+arr_push_quick() {
+    val="$1"
+    len=$(eval "echo \$${arr_name}_len")
+    eval "${arr_name}_$len=\"$val\""
+    eval "${arr_name}_len=\$(($len + 1))"
+}
+
+arr() {
+    [ $# -lt 2 ] && {
+        err 'usage: arr <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    arr_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$arr_name")
+    [ "$kind" != arr ] && [ "$cmd" != '=' ] && {
+        err "'$arr_name' is not an arr"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${arr_name}='[arr] $arr_name'"
+            eval "${arr_name}_type=arr"
+            eval "${arr_name}_len=0"
+            for item in "$@"; do
+                arr "$arr_name" push "$item"
+            done ;;
+
+        clear)
+            last=$(arr "$arr_name" len)
+            last=$((last - 1))
+            for i in $(seq 0 "$last"); do
+                unset "${arr_name}_$i"
+            done
+            eval "${arr_name}_len=0" ;;
+
+        unset)
+            if [ $# = 0 ]; then
+                arr "$arr_name" clear
+                unset "$arr_name"
+                unset "${arr_name}_len"
+                unset "${arr_name}_type"
+            else
+                index="$1"
+                len=$(arr "$arr_name" len)
+                last=$((len - 1))
+                before_last=$((len - 2))
+                for i in $(seq "$index" "$before_last"); do
+                    next=$(arr "$arr_name" get $((i + 1)))
+                    arr "$arr_name" set "$i" "$next"
+                done
+                unset "${arr_name}_$last"
+                eval "${arr_name}_len=$last"
+            fi ;;
+
+        len)
+            varval "${arr_name}_len" ;;
+
+        get)
+            index="$1"
+            [ 0 -gt "$index" ] && {
+                len=$(arr "$arr_name" len)
+                index=$((len + index))
+            }
+            eval "println \"\$${arr_name}_$index\"" ;;
+
+        set)
+            index="$1"
+            val=$(escape_dquote "$2")
+            eval "${arr_name}_$index=\"$val\""
+            len=$(varval "${arr_name}_len")
+            if [ "$index" -gt "$len" ]; then
+                eval "${arr_name}_len=\$(($index + 1))"
+            fi ;;
+
+        push)
+            val=$(escape_dquote "$1")
+            len=$(varval "${arr_name}_len")
+            eval "${arr_name}_$len=\"$val\""
+            eval "${arr_name}_len=\$(($len + 1))" ;;
+
+        push-unsafe)
+            val="$1"
+            len=$(varval "${arr_name}_len")
+            eval "${arr_name}_$len=\"$val\""
+            eval "${arr_name}_len=\$(($len + 1))" ;;
+
+        pop)
+            len=$(arr "$arr_name" len)
+            last=$((len - 1))
+            arr "$arr_name" get "$last"
+            arr "$arr_name" unset "$last" ;;
+
+        shift)
+            arr "$arr_name" get 0
+            arr "$arr_name" unset 0 ;;
+
+        indexof)
+            target="$1"
+            last=$(arr "$arr_name" len)
+            last=$((last - 1))
+            for i in $(seq 0 "$last"); do
+                val=$(arr "$arr_name" get "$i")
+                if [ "$target" = "$val" ]; then
+                    println "$i"
+                    break
+                fi
+            done ;;
+
+        contains)
+            target="$1"
+            index=$(arr "$arr_name" indexof "$target")
+            [ -n "$index" ] ;;
+
+        val)
+            last=$(arr "$arr_name" len)
+            last=$((last - 1))
+            for i in $(seq 0 "$last"); do
+                arr "$arr_name" get "$i"
+            done ;;
+
+        json)
+            last=$(arr "$arr_name" len)
+            last=$((last - 1))
+            printf '[\n'
+            for i in $(seq 0 "$last"); do
+                val=$(arr "$arr_name" get "$i")
+                val=$(json_ref "$val")
+                printf '%s' "$val"
+                [ "$i" = "$last" ] ||
+                    printf ','
+                printf '\n'
+            done
+            printf ']\n' ;;
+
+        sh)
+            name=$(varval "${arr_name}")
+            len=$(arr "$arr_name" len)
+            kind=$(typeof "$arr_name")
+            printf "%s='%s'\n" "${arr_name}" "$name"
+            printf '%s=%s\n' "${arr_name}_len" "$len"
+            printf '%s=%s\n' "${arr_name}_type" "$kind"
+
+            last=$((len - 1))
+            for i in $(seq 0 "$last"); do
+                val=$(arr "$arr_name" get "$i")
+                if isref "$val"; then
+                    ref=$(refof "$val")
+                    ref_kind=$(typeof "$ref")
+                    printf "%s='%s'\n" "${arr_name}_$i" "$val"
+                    ("$ref_kind" "$ref" sh)
+                else
+                    val=$(escape_quote "$val")
+                    printf "%s='%s'\n" "${arr_name}_$i" "$val"
+                fi
+            done ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+obj() {
+    [ $# -lt 2 ] && {
+        err 'usage: obj <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    obj_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$obj_name")
+    [ "$kind" != obj ] && [ "$cmd" != '=' ] && {
+        err "'$obj_name' is not an obj"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${obj_name}='[obj] $obj_name'"
+            eval "${obj_name}_type=obj"
+            arr "_${obj_name}_keys" =
+            i=1
+            while [ $i -lt $# ]; do
+                key=$(eval "echo \$$i")
+                val=$(eval "echo \$$((i + 1))")
+                obj "$obj_name" set "$key" "$val"
+                i=$((i + 2))
+            done ;;
+
+        clear)
+            obj "$obj_name" keys | while read -r key; do
+                sum=$(gen_hash "$key")
+                unset "${obj_name}_$sum"
+            done ;;
+
+        unset)
+            if [ $# = 0 ]; then
+                obj "$obj_name" clear
+                arr "_${obj_name}_keys" clear
+                unset "$obj_name"
+            else
+                key="$1"
+                sum=$(gen_hash "$key")
+                unset "${obj_name}_$sum"
+                key_index=$(arr "_${obj_name}_keys" indexof "$key")
+                arr "_${obj_name}_keys" unset "$key_index"
+            fi ;;
+
+        len)
+            arr "_${obj_name}_keys" len ;;
+
+        get)
+            sum=$(gen_hash "$1")
+            eval "println \"\$${obj_name}_$sum\"" ;;
+
+        set)
+            key="$1"
+            sum=$(gen_hash "$key")
+            if eval "[ -z \"\$${obj_name}_$sum\" ]"; then
+                arr "_${obj_name}_keys" push "$key"
+            fi
+            val=$(escape_dquote "$2")
+            eval "${obj_name}_$sum=\"$val\"" ;;
+
+        keys)
+            arr "_${obj_name}_keys" val ;;
+
+        val)
+            obj "$obj_name" keys | while read -r key; do
+                val=$(obj "$obj_name" get "$key")
+                val=$(escape_quote "$val")
+                key=$(escape_quote "$key")
+                printf "'%s' '%s'\n" "$key" "$val"
+            done ;;
+
+        json)
+            last_key=$(arr "_${obj_name}_keys" get -1)
+            printf '{\n'
+            obj "$obj_name" keys | while read -r key; do
+                val=$(obj "$obj_name" get "$key")
+                val=$(json_ref "$val")
+                key=$(escape_dquote "$key")
+                printf '"%s": %s' "$key" "$val"
+                [ "$key" = "$last_key" ] ||
+                    printf ','
+                printf '\n'
+            done
+            printf '}\n' ;;
+
+        sh)
+            name=$(varval "$obj_name")
+            kind=$(typeof "$obj_name")
+            printf "%s='%s'\n" "${obj_name}" "$name"
+            printf '%s=%s\n' "${obj_name}_type" "$kind"
+            arr "_${obj_name}_keys" sh
+
+            obj "$obj_name" keys | while read -r key; do
+                sum=$(gen_hash "$key")
+                val=$(obj "$obj_name" get "$key")
+                if isref "$val"; then
+                    ref=$(refof "$val")
+                    ref_kind=$(typeof "$ref")
+                    printf "%s='%s'\n" "${obj_name}_$sum" "$val"
+                    ("$ref_kind" "$ref" sh)
+                else
+                    val=$(escape_quote "$val")
+                    printf "%s='%s'\n" "${obj_name}_$sum" "$val"
+                fi
+            done ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+obj_light() {
+    [ $# -lt 2 ] && {
+        err 'usage: obj_light <NAME> <CMD> [ARGS...]'
+        return 1
+    }
+
+    obj_name="$1"
+    cmd="$2"
+    shift 2
+
+    kind=$(typeof "$obj_name")
+    [ "$kind" != obj_light ] && [ "$cmd" != '=' ] && {
+        err "'$obj_name' is not an obj_light"
+        return 1
+    }
+
+    case "$cmd" in
+        =)
+            eval "${obj_name}='[obj_light] $obj_name'"
+            eval "${obj_name}_type=obj_light"
+            arr "_${obj_name}_keys" =
+            i=1
+            while [ $i -lt $# ]; do
+                key=$(eval "echo \$$i")
+                val=$(eval "echo \$$((i + 1))")
+                obj_light "$obj_name" set "$key" "$val"
+                i=$((i + 2))
+            done ;;
+
+        clear)
+            obj_light "$obj_name" keys | while read -r key; do
+                unset "${obj_name}_$key"
+            done ;;
+
+        unset)
+            if [ $# = 0 ]; then
+                obj_light "$obj_name" clear
+                arr "_${obj_name}_keys" clear
+                unset "$obj_name"
+            else
+                key="$1"
+                unset "${obj_name}_$key"
+                key_index=$(arr "_${obj_name}_keys" indexof "$key")
+                arr "_${obj_name}_keys" unset "$key_index"
+            fi ;;
+
+        len)
+            arr "_${obj_name}_keys" len ;;
+
+        get)
+            key=$(echo "$1" | tr - _)
+            eval "println \"\$${obj_name}_$key\"" ;;
+
+        set)
+            key=$(echo "$1" | tr - _)
+            #val="$2"
+            val=$(escape_dquote "$2")
+            eval "${obj_name}_$key=\"$val\"" ;;
+
+        keys)
+            arr "_${obj_name}_keys" val ;;
+
+        val)
+            obj_light "$obj_name" keys | while read -r key; do
+                val=$(obj_light "$obj_name" get "$key")
+                val=$(escape_quote "$val")
+                key=$(escape_quote "$key")
+                printf "'%s' '%s'\n" "$key" "$val"
+            done ;;
+
+        json)
+            last_key=$(arr "_${obj_name}_keys" get -1)
+            printf '{\n'
+            obj_light "$obj_name" keys | while read -r key; do
+                val=$(obj_light "$obj_name" get "$key")
+                val=$(json_ref "$val")
+                key=$(escape_dquote "$key")
+                printf '"%s": %s' "$key" "$val"
+                [ "$key" = "$last_key" ] ||
+                    printf ','
+                printf '\n'
+            done
+            printf '}\n' ;;
+
+        sh)
+            name=$(varval "$obj_name")
+            kind=$(typeof "$obj_name")
+            printf "%s='%s'\n" "${obj_name}" "$name"
+            printf '%s=%s\n' "${obj_name}_type" "$kind"
+            arr "_${obj_name}_keys" sh
+
+            obj_light "$obj_name" keys | while read -r key; do
+                val=$(obj_light "$obj_name" get "$key")
+                if isref "$val"; then
+                    ref=$(refof "$val")
+                    ref_kind=$(typeof "$ref")
+                    printf "%s='%s'\n" "${obj_name}_$key" "$val"
+                    ("$ref_kind" "$ref" sh)
+                else
+                    val=$(escape_quote "$val")
+                    printf "%s='%s'\n" "${obj_name}_$key" "$val"
+                fi
+            done ;;
+
+        *)
+            err "unknown command '$cmd'" ;;
+    esac
+}
+
+main() {
+    case "$1" in
+        --source)
+            echo "$0" ;;
+        --daemon)
+            fifo_in=/tmp/valsh-fifo-in
+            fifo_out=/tmp/valsh-fifo-out
+            rm -f $fifo_in $fifo_out
+            mkfifo $fifo_in $fifo_out
+            tail -f $fifo_in | while read -r line; do
+                eval "$line" > $fifo_out
+            done
+            rm -f $fifo_in $fifo_out
+        ;;
+    esac
+}
+
+main "$@"

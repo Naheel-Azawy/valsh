@@ -1,0 +1,21 @@
+* valsh
+  Values shell. An experimental way to provide reasonable data structures to the POSIX shell. No bashism included.
+  Note that the shell should not be used for serious programming. This script also relies heavily on ~eval~ which is evil.
+
+** Installation
+   #+begin_src shell-script
+     make install
+   #+end_src
+
+** Usage
+   Source it in whatever way you prefer or use the included includer.
+   #+begin_src shell-script
+     . "$(which includer)"
+     include valsh
+   #+end_src
+
+** TODO
+   Document...
+
+** License
+   GPL3

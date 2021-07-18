@@ -1,0 +1,18 @@
+#!/bin/sh
+
+include() {
+    f=$(which "$1" 2>/dev/null)
+    [ -f "$f" ] || f=$(realpath "$1")
+    [ -f "$f" ] || f="$(dirname "$0")/$1"
+    [ -f "$f" ] || {
+        >&2 echo "ERROR: '$1' not found"
+        return 1
+    }
+    sum=$(echo "$f" | cksum | cut -d ' ' -f1)
+    if eval "[ -z \$include_$sum ]"; then
+        eval "include_$sum=1"
+        export included=1
+        . "$f"
+        export included=
+    fi
+}
