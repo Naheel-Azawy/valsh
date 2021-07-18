@@ -1,0 +1,68 @@
+. "$(which includer)"
+include valsh
+
+run() {
+    echo "> $1"
+    time "$1"
+    echo
+}
+
+arr_size=1000
+obj_size=100
+
+arr_push_benchmark() {
+    arr a =
+    for i in $(seq 0 $arr_size); do
+        arr a push "$i"
+    done
+}
+
+arr_push_unsafe_benchmark() {
+    arr a =
+    for i in $(seq 0 $arr_size); do
+        arr a push-unsafe "$i"
+    done
+}
+
+arr_push_quick_benchmark() {
+    arr a =
+    for i in $(seq 0 $arr_size); do
+        arr_push_quick a "$i"
+    done
+}
+
+arr_push_inline_benchmark() {
+    arr a =
+    a_len=0
+    for i in $(seq 0 $arr_size); do
+        eval "a_$a_len=\"$i\""
+        a_len=$((a_len + 1))
+    done
+}
+
+arr_benchmarks() {
+    echo '>>> arr push'
+    run arr_push_benchmark
+    run arr_push_unsafe_benchmark
+    run arr_push_quick_benchmark
+    run arr_push_inline_benchmark
+}
+
+obj_set_benchmark() {
+    obj o =
+    for i in $(seq 0 $obj_size); do
+        obj o set "$i key" "$i val"
+    done
+}
+
+obj_benchmarks() {
+    echo '>>> obj set'
+    run obj_set_benchmark
+}
+
+main() {
+    arr_benchmarks
+    obj_benchmarks
+}
+
+main

@@ -1,0 +1,46 @@
+#!/bin/sh
+
+arr_init() {
+    arr_name="$1"
+    eval "${arr_name}='[arr] $arr_name'"
+    eval "${arr_name}_len=0"
+    for item in "$@"; do
+        arr "$arr_name" push "$item"
+    done
+}
+
+arr_len() {
+    eval "echo \$${1}_len"
+}
+
+arr_set() {
+    eval "${1}_$2=\"$3\""
+}
+
+arr_push() {
+    arr_name="$1"
+    val="$2"
+    len=$(arr_len "$arr_name")
+    eval "${arr_name}_$len=\"$val\""
+    eval "${arr_name}_len=\$(($len + 1))"
+}
+
+arr_get() {
+    arr_name="$1"
+    index="$2"
+    [ 0 -gt "$index" ] && {
+        len=$(arr_len "$arr_name")
+        index=$((len + index))
+    }
+    eval "printf '%s\n' \"\$${arr_name}_$index\""
+}
+
+arr_val() {
+    arr_name="$1"
+    last=$(arr "$arr_name" len)
+    last=$((last - 1))
+    for i in $(seq 0 "$last"); do
+        arr "$arr_name" get "$i"
+    done
+}
+
